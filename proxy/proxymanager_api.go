@@ -23,6 +23,9 @@ type Model struct {
 	Unlisted    bool     `json:"unlisted"`
 	PeerID      string   `json:"peerID"`
 	Aliases     []string `json:"aliases,omitempty"`
+	RAMBytes    int64    `json:"ramBytes,omitempty"`
+	VRAMBytes   int64    `json:"vramBytes,omitempty"`
+	MemoryStale bool     `json:"memoryStale,omitempty"`
 }
 
 func addApiHandlers(pm *ProxyManager) {
@@ -32,6 +35,7 @@ func addApiHandlers(pm *ProxyManager) {
 	{
 		apiGroup.POST("/models/unload", pm.apiUnloadAllModels)
 		apiGroup.POST("/models/unload/*model", pm.apiUnloadSingleModelHandler)
+		apiGroup.POST("/restart", pm.apiRestart)
 		apiGroup.GET("/events", pm.apiSendEvents)
 		apiGroup.GET("/metrics", pm.apiGetMetrics)
 		apiGroup.GET("/performance", pm.apiGetPerformance)
@@ -42,6 +46,11 @@ func addApiHandlers(pm *ProxyManager) {
 
 func (pm *ProxyManager) apiUnloadAllModels(c *gin.Context) {
 	pm.StopProcesses(StopImmediately)
+	c.JSON(http.StatusOK, gin.H{"msg": "ok"})
+}
+
+func (pm *ProxyManager) apiRestart(c *gin.Context) {
+	event.Emit(ConfigFileChangedEvent{ReloadingState: ReloadingStateStart})
 	c.JSON(http.StatusOK, gin.H{"msg": "ok"})
 }
 
@@ -82,6 +91,23 @@ func (pm *ProxyManager) getModelStatus() []Model {
 				state = "stopped"
 			}
 		}
+
+		var ramBytes int64
+		var vramBytes int64
+		var memoryStale bool
+		if process != nil && process.CurrentState() == StateReady {
+			if mem, err := process.GetMemoryUsage(); err == nil {
+				ramBytes = mem.RAMBytes
+				vramBytes = mem.VRAMBytes
+				process.SetLastMemory(ramBytes, vramBytes)
+			}
+		} else if process != nil {
+			ramBytes, vramBytes = process.GetLastMemory()
+			if ramBytes > 0 || vramBytes > 0 {
+				memoryStale = true
+			}
+		}
+
 		models = append(models, Model{
 			Id:          modelID,
 			Name:        pm.config.Models[modelID].Name,
@@ -89,6 +115,9 @@ func (pm *ProxyManager) getModelStatus() []Model {
 			State:       state,
 			Unlisted:    pm.config.Models[modelID].Unlisted,
 			Aliases:     pm.config.Models[modelID].Aliases,
+			RAMBytes:    ramBytes,
+			VRAMBytes:   vramBytes,
+			MemoryStale: memoryStale,
 		})
 	}
 
@@ -190,6 +219,19 @@ func (pm *ProxyManager) apiSendEvents(c *gin.Context) {
 	 */
 	defer event.On(func(e ProcessStateChangeEvent) {
 		sendModels()
+		if e.NewState == StateReady {
+			go func() {
+				time.Sleep(5 * time.Second)
+				data, err := json.Marshal(pm.getModelStatus())
+				if err == nil {
+					select {
+					case sendBuffer <- messageEnvelope{Type: msgTypeModelStatus, Data: string(data)}:
+					case <-ctx.Done():
+					default:
+					}
+				}
+			}()
+		}
 	})()
 	defer event.On(func(e ConfigFileChangedEvent) {
 		sendModels()

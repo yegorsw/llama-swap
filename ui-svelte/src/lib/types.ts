@@ -10,6 +10,9 @@ export interface Model {
   unlisted: boolean;
   peerID: string;
   aliases?: string[];
+  ramBytes?: number;
+  vramBytes?: number;
+  memoryStale?: boolean;
 }
 
 export interface TokenMetrics {
@@ -132,7 +135,8 @@ export interface ChatMessage {
   reasoningTimeMs?: number;
 }
 
-export function getTextContent(content: string | ContentPart[]): string {
+export function getTextContent(content: string | ContentPart[] | null): string {
+  if (!content) return "";
   if (typeof content === "string") {
     return content;
   }
@@ -140,8 +144,8 @@ export function getTextContent(content: string | ContentPart[]): string {
   return textParts.map((part) => part.text).join("\n");
 }
 
-export function getImageUrls(content: string | ContentPart[]): string[] {
-  if (typeof content === "string") {
+export function getImageUrls(content: string | ContentPart[] | null): string[] {
+  if (!content || typeof content === "string") {
     return [];
   }
   return content

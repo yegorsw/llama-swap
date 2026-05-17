@@ -3,6 +3,7 @@
   import ActivityStats from "../components/ActivityStats.svelte";
   import Tooltip from "../components/Tooltip.svelte";
   import CaptureDialog from "../components/CaptureDialog.svelte";
+  import ChatViewDialog from "../components/ChatViewDialog.svelte";
   import { persistentStore } from "../stores/persistent";
   import { onMount } from "svelte";
   import type { ReqRespCapture } from "../lib/types";
@@ -20,7 +21,8 @@
     | "prompt_speed"
     | "gen_speed"
     | "duration"
-    | "capture";
+    | "capture"
+    | "chat";
 
   interface ColumnDef {
     key: ColumnKey;
@@ -42,6 +44,7 @@
     { key: "gen_speed", label: "Gen Speed", defaultVisible: true },
     { key: "duration", label: "Duration", defaultVisible: true },
     { key: "capture", label: "Capture", defaultVisible: true },
+    { key: "chat", label: "Chat", defaultVisible: true },
   ];
 
   const defaultVisibleKeys = columns.filter((c) => c.defaultVisible).map((c) => c.key);
@@ -124,6 +127,9 @@
   let selectedCapture = $state<ReqRespCapture | null>(null);
   let dialogOpen = $state(false);
   let loadingCaptureId = $state<number | null>(null);
+  let chatCapture = $state<ReqRespCapture | null>(null);
+  let chatDialogOpen = $state(false);
+  let loadingChatId = $state<number | null>(null);
 
   async function viewCapture(id: number) {
     loadingCaptureId = id;
@@ -136,6 +142,21 @@
   function closeDialog() {
     dialogOpen = false;
     selectedCapture = null;
+  }
+
+  async function openChatView(id: number) {
+    loadingChatId = id;
+    const capture = await getCapture(id);
+    loadingChatId = null;
+    if (capture) {
+      chatCapture = capture;
+      chatDialogOpen = true;
+    }
+  }
+
+  function closeChatDialog() {
+    chatDialogOpen = false;
+    chatCapture = null;
   }
 </script>
 
@@ -225,6 +246,9 @@
           {#if $visibleColumns.includes("capture")}
             <th class="px-6 py-3">Capture</th>
           {/if}
+          {#if $visibleColumns.includes("chat")}
+            <th class="px-6 py-3">Chat</th>
+          {/if}
         </tr>
       </thead>
       <tbody class="divide-y">
@@ -288,6 +312,21 @@
                   {/if}
                 </td>
               {/if}
+              {#if $visibleColumns.includes("chat")}
+                <td class="px-6 py-4">
+                  {#if metric.has_capture}
+                    <button
+                      onclick={() => openChatView(metric.id)}
+                      disabled={loadingChatId === metric.id}
+                      class="btn btn--sm"
+                    >
+                      {loadingChatId === metric.id ? "..." : "Chat"}
+                    </button>
+                  {:else}
+                    <span class="text-txtsecondary">-</span>
+                  {/if}
+                </td>
+              {/if}
             </tr>
           {/each}
         {/if}
@@ -297,3 +336,4 @@
 </div>
 
 <CaptureDialog capture={selectedCapture} open={dialogOpen} onclose={closeDialog} />
+<ChatViewDialog capture={chatCapture} open={chatDialogOpen} onclose={closeChatDialog} />
