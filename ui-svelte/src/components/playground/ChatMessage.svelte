@@ -2,8 +2,8 @@
   import { renderMarkdown, escapeHtml, renderStreamingMarkdown, createStreamingCache } from "../../lib/markdown";
   import type { RenderedBlock } from "../../lib/markdown";
   import { Copy, Check, Pencil, X, Save, RefreshCw, ChevronDown, ChevronRight, Brain, Code } from "lucide-svelte";
-  import { getTextContent, getImageUrls } from "../../lib/types";
-  import type { ContentPart } from "../../lib/types";
+  import { getTextContent, getImageUrls, getAudioContentParts } from "../../lib/types";
+  import type { AudioContentPart, ContentPart } from "../../lib/types";
 
   interface Props {
     role: "user" | "assistant" | "system";
@@ -20,8 +20,10 @@
 
   let textContent = $derived(getTextContent(content));
   let imageUrls = $derived(getImageUrls(content));
+  let audioParts = $derived(getAudioContentParts(content));
   let hasImages = $derived(imageUrls.length > 0);
-  let canEdit = $derived(onEdit !== undefined && !hasImages);
+  let hasAudio = $derived(audioParts.length > 0);
+  let canEdit = $derived(onEdit !== undefined && !hasImages && !hasAudio);
 
   let streamingCache = createStreamingCache();
   let renderedParts = $derived.by(() => {
@@ -91,6 +93,10 @@
   function openModal(imageUrl: string) {
     modalImageUrl = imageUrl;
     document.body.style.overflow = "hidden";
+  }
+
+  function audioSource(part: AudioContentPart): string {
+    return `data:audio/${part.input_audio.format};base64,${part.input_audio.data}`;
   }
 
   function closeModal(event?: MouseEvent) {
@@ -212,6 +218,19 @@
           {/each}
         </div>
       {/if}
+      {#if hasAudio}
+        <div class="mb-3 flex flex-col gap-2">
+          {#each audioParts as audioPart, idx (idx)}
+            <div class="rounded border border-gray-200 dark:border-white/10 bg-background/50 p-2">
+              <div class="mb-1 text-xs text-txtsecondary uppercase">{audioPart.input_audio.format} audio</div>
+              <audio controls class="w-full h-10">
+                <source src={audioSource(audioPart)} type="audio/{audioPart.input_audio.format}" />
+                Your browser does not support the audio element.
+              </audio>
+            </div>
+          {/each}
+        </div>
+      {/if}
       {#if showRaw}
         <div class="whitespace-pre-wrap font-mono text-sm">{textContent}</div>
       {:else}
@@ -296,6 +315,19 @@
                   class="max-w-[200px] rounded"
                 />
               </button>
+            {/each}
+          </div>
+        {/if}
+        {#if hasAudio}
+          <div class="mb-2 flex flex-col gap-2">
+            {#each audioParts as audioPart, idx (idx)}
+              <div class="rounded border border-white/20 bg-black/10 p-2">
+                <div class="mb-1 text-xs uppercase opacity-80">{audioPart.input_audio.format} audio</div>
+                <audio controls class="w-full h-10">
+                  <source src={audioSource(audioPart)} type="audio/{audioPart.input_audio.format}" />
+                  Your browser does not support the audio element.
+                </audio>
+              </div>
             {/each}
           </div>
         {/if}

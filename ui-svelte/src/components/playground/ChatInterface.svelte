@@ -3,7 +3,7 @@
   import { persistentStore } from "../../stores/persistent";
   import { streamChatCompletion, type Endpoint } from "../../lib/chatApi";
   import { playgroundStores } from "../../stores/playgroundActivity";
-  import type { ChatMessage, ContentPart } from "../../lib/types";
+  import type { AudioContentPart, ChatMessage, ContentPart } from "../../lib/types";
   import ChatMessageComponent from "./ChatMessage.svelte";
   import ModelSelector from "./ModelSelector.svelte";
   import ExpandableTextarea from "./ExpandableTextarea.svelte";
@@ -13,6 +13,12 @@
   const temperatureStore = persistentStore<number>("playground-temperature", 0.7);
   const endpointStore = persistentStore<Endpoint>("playground-endpoint", "v1/chat/completions");
   const maxTokensStore = persistentStore<number>("playground-max-tokens", 4096);
+
+  type AttachedAudio = AudioContentPart["input_audio"] & {
+    name: string;
+    size: number;
+    url: string;
+  };
 
   function loadMessages(): ChatMessage[] {
     try {
@@ -32,6 +38,7 @@
   let messagesContainer: HTMLDivElement | undefined = $state();
   let showSettings = $state(false);
   let attachedImages = $state<string[]>([]);
+  let attachedAudio = $state<AttachedAudio | null>(null);
   let fileInput = $state<HTMLInputElement | null>(null);
   let imageError = $state<string | null>(null);
 
@@ -78,19 +85,32 @@
 
   async function sendMessage() {
     const trimmedInput = userInput.trim();
-    if ((!trimmedInput && attachedImages.length === 0) || !$selectedModelStore || isStreaming) return;
+    if ((!trimmedInput && attachedImages.length === 0 && !attachedAudio) || !$selectedModelStore || isStreaming) return;
+    if (attachedAudio && $endpointStore !== "v1/chat/completions") {
+      imageError = "Audio attachments are only supported with /v1/chat/completions";
+      return;
+    }
 
     userScrolledUp = false;
 
-    // Build message content (multimodal if images attached)
+    // Build message content (multimodal if attachments exist)
     let content: string | ContentPart[];
-    if (attachedImages.length > 0) {
+    if (attachedImages.length > 0 || attachedAudio) {
       const parts: ContentPart[] = [];
       if (trimmedInput) {
         parts.push({ type: "text", text: trimmedInput });
       }
       for (const url of attachedImages) {
         parts.push({ type: "image_url", image_url: { url } });
+      }
+      if (attachedAudio) {
+        parts.push({
+          type: "input_audio",
+          input_audio: {
+            data: attachedAudio.data,
+            format: attachedAudio.format,
+          },
+        });
       }
       content = parts;
     } else {
@@ -101,6 +121,7 @@
     messages = [...messages, { role: "user", content }];
     userInput = "";
     attachedImages = [];
+    attachedAudio = null;
     imageError = null;
 
     // Generate response from the new user message
@@ -238,7 +259,23 @@
 
   const ACCEPTED_IMAGE_FORMATS = ["image/jpeg", "image/png", "image/gif", "image/webp"];
   const MAX_IMAGE_SIZE = 20 * 1024 * 1024; // 20MB
+  const MAX_AUDIO_SIZE = 20 * 1024 * 1024; // 20MB
   const MAX_IMAGES_PER_MESSAGE = 5;
+  const MAX_AUDIO_PER_MESSAGE = 1;
+
+  function getAudioFormat(file: File): "wav" | "mp3" | null {
+    const ext = file.name.split(".").pop()?.toLowerCase();
+    if (ext === "wav" || ext === "mp3") {
+      return ext;
+    }
+    if (file.type === "audio/wav" || file.type === "audio/x-wav" || file.type === "audio/wave") {
+      return "wav";
+    }
+    if (file.type === "audio/mpeg" || file.type === "audio/mp3") {
+      return "mp3";
+    }
+    return null;
+  }
 
   function validateImageFile(file: File): string | null {
     if (!ACCEPTED_IMAGE_FORMATS.includes(file.type)) {
@@ -246,6 +283,16 @@
     }
     if (file.size > MAX_IMAGE_SIZE) {
       return `File too large: ${(file.size / 1024 / 1024).toFixed(1)}MB. Maximum size: 20MB`;
+    }
+    return null;
+  }
+
+  function validateAudioFile(file: File): string | null {
+    if (!getAudioFormat(file)) {
+      return `Invalid file type: ${file.type || file.name}. Accepted formats: WAV, MP3`;
+    }
+    if (file.size > MAX_AUDIO_SIZE) {
+      return `Audio file too large: ${(file.size / 1024 / 1024).toFixed(1)}MB. Maximum size: 20MB`;
     }
     return null;
   }
@@ -259,16 +306,44 @@
     });
   }
 
-  async function processImageFiles(files: File[]): Promise<void> {
+  function dataUrlToBase64(url: string): string {
+    const match = /^data:[^;]+;base64,(.*)$/i.exec(url);
+    if (!match) {
+      throw new Error("Attachment is not a base64 data URL");
+    }
+    return match[1];
+  }
+
+  async function processAttachmentFiles(files: File[]): Promise<void> {
     imageError = null;
 
-    if (attachedImages.length + files.length > MAX_IMAGES_PER_MESSAGE) {
-      imageError = `Maximum ${MAX_IMAGES_PER_MESSAGE} images per message`;
+    const imageFiles = files.filter((file) => file.type.startsWith("image/"));
+    const audioFiles = files.filter((file) => getAudioFormat(file));
+    const unknownFiles = files.filter((file) => !file.type.startsWith("image/") && !getAudioFormat(file));
+
+    if (unknownFiles.length > 0) {
+      imageError = `Invalid file type: ${unknownFiles[0].type || unknownFiles[0].name}. Accepted formats: JPG, PNG, GIF, WEBP, WAV, MP3`;
       return;
     }
 
-    for (const file of files) {
+    if (attachedImages.length + imageFiles.length > MAX_IMAGES_PER_MESSAGE) {
+      imageError = `Maximum ${MAX_IMAGES_PER_MESSAGE} images per message`;
+      return;
+    }
+    if ((attachedAudio ? 1 : 0) + audioFiles.length > MAX_AUDIO_PER_MESSAGE) {
+      imageError = "Maximum 1 audio file per message";
+      return;
+    }
+
+    for (const file of imageFiles) {
       const error = validateImageFile(file);
+      if (error) {
+        imageError = error;
+        return;
+      }
+    }
+    for (const file of audioFiles) {
+      const error = validateAudioFile(file);
       if (error) {
         imageError = error;
         return;
@@ -276,17 +351,32 @@
     }
 
     try {
-      const dataUrls = await Promise.all(files.map(fileToDataUrl));
-      attachedImages = [...attachedImages, ...dataUrls];
+      const imageDataUrls = await Promise.all(imageFiles.map(fileToDataUrl));
+      attachedImages = [...attachedImages, ...imageDataUrls];
+      if (audioFiles.length > 0) {
+        const audioFile = audioFiles[0];
+        const audioUrl = await fileToDataUrl(audioFile);
+        const format = getAudioFormat(audioFile);
+        if (!format) {
+          throw new Error("Invalid audio file");
+        }
+        attachedAudio = {
+          data: dataUrlToBase64(audioUrl),
+          format,
+          name: audioFile.name,
+          size: audioFile.size,
+          url: audioUrl,
+        };
+      }
     } catch (error) {
-      imageError = error instanceof Error ? error.message : "Failed to process images";
+      imageError = error instanceof Error ? error.message : "Failed to process attachments";
     }
   }
 
   function handleImageSelect(event: Event) {
     const input = event.target as HTMLInputElement;
     if (input.files && input.files.length > 0) {
-      processImageFiles(Array.from(input.files));
+      processAttachmentFiles(Array.from(input.files));
     }
     // Reset the input so the same file can be selected again
     input.value = "";
@@ -295,6 +385,17 @@
   function removeImage(idx: number) {
     attachedImages = attachedImages.filter((_, i) => i !== idx);
     imageError = null;
+  }
+
+  function removeAudio() {
+    attachedAudio = null;
+    imageError = null;
+  }
+
+  function formatFileSize(bytes: number): string {
+    if (bytes < 1024) return bytes + " B";
+    if (bytes < 1024 * 1024) return (bytes / 1024).toFixed(1) + " KB";
+    return (bytes / (1024 * 1024)).toFixed(1) + " MB";
   }
 </script>
 
@@ -415,8 +516,8 @@
 
     <!-- Input area -->
     <div class="shrink-0">
-      <!-- Image preview strip -->
-      {#if attachedImages.length > 0}
+      <!-- Attachment preview strip -->
+      {#if attachedImages.length > 0 || attachedAudio}
         <div class="mb-2 flex flex-wrap gap-2">
           {#each attachedImages as imageUrl, idx (idx)}
             <div class="relative group">
@@ -434,6 +535,25 @@
               </button>
             </div>
           {/each}
+          {#if attachedAudio}
+            <div class="relative group w-full max-w-sm rounded border border-gray-200 dark:border-white/10 bg-surface p-2">
+              <div class="mb-1 flex items-center justify-between gap-2 text-xs text-txtsecondary">
+                <span class="truncate">{attachedAudio.name}</span>
+                <span class="shrink-0">{formatFileSize(attachedAudio.size)}</span>
+              </div>
+              <audio controls class="w-full h-10">
+                <source src={attachedAudio.url} type="audio/{attachedAudio.format}" />
+                Your browser does not support the audio element.
+              </audio>
+              <button
+                class="absolute -top-2 -right-2 bg-red-500 text-white rounded-full w-6 h-6 flex items-center justify-center opacity-0 group-hover:opacity-100 transition-opacity"
+                onclick={removeAudio}
+                title="Remove audio"
+              >
+                ×
+              </button>
+            </div>
+          {/if}
         </div>
       {/if}
 
@@ -448,7 +568,7 @@
         <!-- Hidden file input -->
         <input
           type="file"
-          accept=".jpg,.jpeg,.png,.gif,.webp"
+          accept=".jpg,.jpeg,.png,.gif,.webp,.wav,.mp3"
           multiple
           class="hidden"
           bind:this={fileInput}
@@ -472,7 +592,7 @@
               class="btn"
               onclick={() => fileInput?.click()}
               disabled={isStreaming || !$selectedModelStore}
-              title="Attach image"
+              title="Attach image or audio"
             >
               <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 20 20" fill="currentColor" class="w-5 h-5">
                 <path fill-rule="evenodd" d="M1 5.25A2.25 2.25 0 0 1 3.25 3h13.5A2.25 2.25 0 0 1 19 5.25v9.5A2.25 2.25 0 0 1 16.75 17H3.25A2.25 2.25 0 0 1 1 14.75v-9.5Zm1.5 5.81v3.69c0 .414.336.75.75.75h13.5a.75.75 0 0 0 .75-.75v-2.69l-2.22-2.219a.75.75 0 0 0-1.06 0l-1.91 1.909.47.47a.75.75 0 1 1-1.06 1.06L6.53 8.091a.75.75 0 0 0-1.06 0l-2.97 2.97ZM12 7a1 1 0 1 1-2 0 1 1 0 0 1 2 0Z" clip-rule="evenodd" />
@@ -481,7 +601,7 @@
             <button
               class="btn bg-primary text-btn-primary-text hover:opacity-90"
               onclick={sendMessage}
-              disabled={(!userInput.trim() && attachedImages.length === 0) || !$selectedModelStore}
+              disabled={(!userInput.trim() && attachedImages.length === 0 && !attachedAudio) || !$selectedModelStore}
             >
               Send
             </button>

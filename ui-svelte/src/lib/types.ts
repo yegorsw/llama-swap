@@ -126,7 +126,15 @@ export type ImageContentPart = {
   image_url: { url: string };
 };
 
-export type ContentPart = TextContentPart | ImageContentPart;
+export type AudioContentPart = {
+  type: "input_audio";
+  input_audio: {
+    data: string;
+    format: "wav" | "mp3";
+  };
+};
+
+export type ContentPart = TextContentPart | ImageContentPart | AudioContentPart;
 
 export interface ChatMessage {
   role: "user" | "assistant" | "system";
@@ -151,6 +159,13 @@ export function getImageUrls(content: string | ContentPart[] | null): string[] {
   return content
     .filter((part): part is ImageContentPart => part.type === "image_url")
     .map((part) => part.image_url.url);
+}
+
+export function getAudioContentParts(content: string | ContentPart[] | null): AudioContentPart[] {
+  if (!content || typeof content === "string") {
+    return [];
+  }
+  return content.filter((part): part is AudioContentPart => part.type === "input_audio");
 }
 
 export interface ChatCompletionRequest {

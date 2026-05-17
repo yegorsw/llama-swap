@@ -22,6 +22,12 @@ function parseDataUrl(url: string): { media_type: string; data: string } {
   return { media_type: match[1], data: match[2] };
 }
 
+function hasAudioContent(messages: ChatMessage[]): boolean {
+  return messages.some((msg) => (
+    Array.isArray(msg.content) && msg.content.some((part) => part.type === "input_audio")
+  ));
+}
+
 function splitSystemMessages(messages: ChatMessage[]): { system: string; rest: ChatMessage[] } {
   const systemParts: string[] = [];
   const rest: ChatMessage[] = [];
@@ -64,6 +70,8 @@ function buildMessagesBody(model: string, messages: ChatMessage[], options?: Cha
     for (const part of m.content as ContentPart[]) {
       if (part.type === "text") {
         blocks.push({ type: "text", text: part.text });
+      } else if (part.type === "input_audio") {
+        throw new Error("Audio attachments are only supported with /v1/chat/completions");
       } else if (m.role !== "assistant") {
         const { media_type, data } = parseDataUrl(part.image_url.url);
         blocks.push({ type: "image", source: { type: "base64", media_type, data } });
@@ -95,6 +103,9 @@ function buildResponsesBody(model: string, messages: ChatMessage[], options?: Ch
       if (part.type === "text") {
         return { type: isAssistant ? "output_text" : "input_text", text: part.text };
       }
+      if (part.type === "input_audio") {
+        throw new Error("Audio attachments are only supported with /v1/chat/completions");
+      }
       return { type: "input_image", image_url: part.image_url.url };
     });
     return { role: m.role, content };
@@ -111,12 +122,16 @@ function buildResponsesBody(model: string, messages: ChatMessage[], options?: Ch
   return body;
 }
 
-function buildRequest(
+export function buildRequest(
   endpoint: Endpoint,
   model: string,
   messages: ChatMessage[],
   options?: ChatOptions
 ): { url: string; body: object } {
+  if (endpoint !== "v1/chat/completions" && hasAudioContent(messages)) {
+    throw new Error("Audio attachments are only supported with /v1/chat/completions");
+  }
+
   const url = "/" + endpoint;
   switch (endpoint) {
     case "v1/messages":
