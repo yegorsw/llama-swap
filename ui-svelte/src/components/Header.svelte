@@ -28,6 +28,15 @@
     return path === "/" ? current === "/" : current.startsWith(path);
   }
 
+  let restarting = false;
+
+  async function handleRestart(): Promise<void> {
+    if (restarting) return;
+    restarting = true;
+    await fetch("/api/restart", { method: "POST" });
+    setTimeout(() => location.reload(), 4000);
+  }
+
 </script>
 
 <header
@@ -47,6 +56,9 @@
   {/if}
 
   <menu class="flex items-center gap-4 overflow-x-auto">
+    <button onclick={handleRestart} title="Restart server" class="px-3 py-1 rounded-md border border-border bg-surface hover:bg-gray-100 dark:hover:bg-gray-700 text-gray-600 dark:text-gray-300 text-sm whitespace-nowrap">
+      Restart
+    </button>
     <a
       href="/"
       use:link

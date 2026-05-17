@@ -53,6 +53,17 @@
   function getModelDisplay(model: Model): string {
     return $showIdorNameStore === "id" ? model.id : (model.name || model.id);
   }
+
+  function formatBytes(bytes?: number): string {
+    if (!bytes || bytes === 0) return "-";
+    if (bytes < 1024 * 1024) {
+      return `${(bytes / 1024).toFixed(0)} KB`;
+    }
+    if (bytes < 1024 * 1024 * 1024) {
+      return `${(bytes / (1024 * 1024)).toFixed(1)} MB`;
+    }
+    return `${(bytes / (1024 * 1024 * 1024)).toFixed(1)} GB`;
+  }
 </script>
 
 <div class="card h-full flex flex-col">
@@ -152,6 +163,8 @@
         <tr class="text-left border-b border-gray-200 dark:border-white/10 bg-surface">
           <th>{$showIdorNameStore === "id" ? "Model ID" : "Name"}</th>
           <th></th>
+          <th>RAM</th>
+          <th>VRAM</th>
           <th>State</th>
         </tr>
       </thead>
@@ -176,6 +189,8 @@
                 <button class="btn btn--sm" onclick={() => unloadSingleModel(model.id)} disabled={model.state !== "ready"}>Unload</button>
               {/if}
             </td>
+            <td class="w-20 text-right font-mono text-sm {model.memoryStale ? 'text-txtsecondary opacity-50' : ''}">{formatBytes(model.ramBytes)}</td>
+            <td class="w-20 text-right font-mono text-sm {model.memoryStale ? 'text-txtsecondary opacity-50' : ''}">{formatBytes(model.vramBytes)}</td>
             <td class="w-20">
               <span class="w-16 text-center status status--{model.state}">{model.state}</span>
             </td>

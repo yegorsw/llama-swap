@@ -83,6 +83,11 @@ type Process struct {
 
 	// track the number of failed starts
 	failedStartCount int
+
+	// cached memory from last time this model was ready
+	lastMemoryMutex sync.RWMutex
+	lastRAMBytes    int64
+	lastVRAMBytes   int64
 }
 
 func NewProcess(ID string, healthCheckTimeout int, config config.ModelConfig, processLogger *logmon.Monitor, proxyLogger *logmon.Monitor) *Process {
@@ -729,6 +734,26 @@ func (p *Process) cmdStopUpstreamProcess() error {
 // Logger returns the logger for this process.
 func (p *Process) Logger() *logmon.Monitor {
 	return p.processLogger
+}
+
+func (p *Process) SetLastMemory(ram, vram int64) {
+	p.lastMemoryMutex.Lock()
+	p.lastRAMBytes = ram
+	p.lastVRAMBytes = vram
+	p.lastMemoryMutex.Unlock()
+	defaultCache.Set(p.ID, ram, vram)
+	defaultCache.Save()
+}
+
+func (p *Process) GetLastMemory() (ram, vram int64) {
+	p.lastMemoryMutex.RLock()
+	ram = p.lastRAMBytes
+	vram = p.lastVRAMBytes
+	p.lastMemoryMutex.RUnlock()
+	if ram == 0 && vram == 0 {
+		ram, vram = defaultCache.Get(p.ID)
+	}
+	return
 }
 
 var loadingRemarks = []string{
